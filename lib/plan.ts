@@ -1,4 +1,41 @@
-import type { PlannedWorkout } from "./types";
+import type { GeneratedPlan, PlannedWorkout } from "./types";
+
+/**
+ * Detect a ```plan fenced block in an assistant reply and parse the
+ * periodized plan JSON inside it.
+ */
+export function parsePlanBlock(
+  content: string
+): { plan: GeneratedPlan; raw: string } | null {
+  const match = content.match(/```plan\s*([\s\S]*?)```/i);
+  if (!match) return null;
+  try {
+    const parsed = JSON.parse(match[1].trim()) as GeneratedPlan;
+    if (parsed && Array.isArray(parsed.weeks) && parsed.weeks.length > 0) {
+      return { plan: parsed, raw: match[0] };
+    }
+  } catch {
+    // not valid JSON — ignore
+  }
+  return null;
+}
+
+/** Earliest workout date across all weeks of a generated plan. */
+export function planStartDate(plan: GeneratedPlan): string {
+  const dates = plan.weeks
+    .flatMap((w) => w.workouts ?? [])
+    .map((w) => w.date)
+    .filter(Boolean)
+    .sort();
+  return dates[0] ?? "—";
+}
+
+/** Short human summary used in place of the raw plan JSON. */
+export function planSummary(plan: GeneratedPlan): string {
+  return `Plan generated: ${plan.weeks.length} weeks, starting ${planStartDate(
+    plan
+  )}`;
+}
 
 function isWorkout(v: unknown): v is PlannedWorkout {
   if (!v || typeof v !== "object") return false;

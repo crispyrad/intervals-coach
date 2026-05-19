@@ -35,6 +35,9 @@ export interface AthleteData {
   activities: Activity[];
   wellness: Wellness[];
   syncedAt: string;
+  /** Merged in client-side from localStorage before the /api/coach call. */
+  weeklyHours?: number;
+  preferredDays?: string[];
 }
 
 export interface ChatMessage {
@@ -71,4 +74,27 @@ export interface PlannedWorkout {
 export interface PushResult {
   pushed: number;
   errors: string[];
+}
+
+/** A single workout inside a coach-generated periodized plan. */
+export interface PlanWorkout {
+  date: string; // YYYY-MM-DD
+  name: string;
+  type: string;
+  durationMinutes: number;
+  description: string;
+  intensity: string;
+  plannedLoad: number;
+}
+
+export interface PlanWeek {
+  weekNumber: number;
+  phase: string;
+  totalHours: number;
+  workouts: PlanWorkout[];
+}
+
+/** The structured plan emitted by the coach inside a ```plan block. */
+export interface GeneratedPlan {
+  weeks: PlanWeek[];
 }

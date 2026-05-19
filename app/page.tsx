@@ -3,6 +3,7 @@
 import { useState } from "react";
 import TrainingLoadChart from "@/components/TrainingLoadChart";
 import TargetEvents from "@/components/TargetEvents";
+import TrainingPreferences from "@/components/TrainingPreferences";
 import { useStore } from "@/lib/store";
 import { formatDate, formatDuration } from "@/lib/format";
 import type { AthleteData } from "@/lib/types";
@@ -66,6 +67,8 @@ export default function DashboardPage() {
       )}
 
       <TargetEvents />
+
+      <TrainingPreferences />
 
       {athleteData && (
         <>
