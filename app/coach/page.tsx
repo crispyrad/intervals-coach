@@ -65,6 +65,9 @@ export default function CoachPage() {
   const [hasPlan, setHasPlan] = useState(false);
   const [phase, setPhase] = useState("Base");
   const [blockWeeks, setBlockWeeks] = useState(3);
+  const [startDate, setStartDate] = useState(() =>
+    new Date().toISOString().slice(0, 10)
+  );
   const sending = useRef(false);
 
   const wellness = latestWellness(athleteData);
@@ -198,8 +201,8 @@ export default function CoachPage() {
       lastWeek > 0
         ? `I already have weeks 1-${lastWeek} saved. Continue week numbering from week ${
             lastWeek + 1
-          } and continue workout dates from the day after the last saved workout. Output ONLY the new ${blockWeeks}-week block.`
-        : `This is the first block — start at week 1 from today.`;
+          }. Output ONLY the new ${blockWeeks}-week block.`
+        : `This is the first block — start at week 1.`;
 
     const eventLine = event
       ? `- Next target event: ${event.name} on ${event.date} (${event.type}, Priority ${event.priority})`
@@ -208,6 +211,7 @@ export default function CoachPage() {
     const message = `Please generate the next training block.
 - Phase: ${phase}
 - Block length: ${blockWeeks} weeks
+- Block start date: ${startDate} (schedule this block's first workout on or after this date, on preferred days only)
 - Loading pattern: 2 weeks load + 1 week recovery (masters athlete, age 49)
 - Weekly hours available: ${weeklyHours}
 - Preferred training days: ${daysText}
@@ -330,6 +334,15 @@ Follow the masters periodization guidance for the ${phase} phase. Output the blo
                 <option value={3}>3 weeks (2 load + 1 recovery)</option>
                 <option value={4}>4 weeks (3 load + 1 recovery)</option>
               </select>
+            </label>
+            <label className="flex flex-col text-xs text-slate-500">
+              Block start date
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="mt-1 rounded border border-slate-300 px-2 py-1 text-sm text-slate-900"
+              />
             </label>
             <button
               onClick={buildBlock}
