@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store";
 import { parsePlanBlock, planSummary } from "@/lib/plan";
-import type { ChatMessage, TargetEvent } from "@/lib/types";
+import type { ChatMessage, GeneratedPlan, TargetEvent } from "@/lib/types";
 
 const CHAT_KEY = "coach-chat-history";
 const PLAN_KEY = "generatedPlan";
@@ -32,6 +32,20 @@ function readPrefs(): { weeklyHours: number; preferredDays: string[] } {
   return { weeklyHours, preferredDays };
 }
 
+/** Read the currently saved plan so the coach can revise / reassess it. */
+function readCurrentPlan(): GeneratedPlan | null {
+  try {
+    const s = localStorage.getItem(PLAN_KEY);
+    if (s) {
+      const parsed = JSON.parse(s);
+      if (parsed && Array.isArray(parsed.weeks)) return parsed as GeneratedPlan;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
 /** Soonest upcoming target event, falling back to the earliest overall. */
 function nextTargetEvent(events: TargetEvent[]): TargetEvent | null {
   if (events.length === 0) return null;
@@ -45,14 +59,16 @@ export default function CoachPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [hasPlan, setHasPlan] = useState(false);
   const sending = useRef(false);
 
   const wellness = latestWellness(athleteData);
   const ftp = athleteData?.profile?.ftp;
 
-  // Load chat history from localStorage on mount.
+  // Load chat history + detect an existing saved plan on mount.
   useEffect(() => {
     try {
       const stored = localStorage.getItem(CHAT_KEY);
@@ -63,18 +79,19 @@ export default function CoachPage() {
     } catch {
       // ignore corrupt storage
     }
+    setHasPlan(readCurrentPlan() != null);
     setLoaded(true);
   }, []);
 
-  // Persist chat history whenever it changes (after the initial load).
+  // Persist chat history once loading settles (avoids a write per token).
   useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || loading) return;
     try {
       localStorage.setItem(CHAT_KEY, JSON.stringify(messages));
     } catch {
       // ignore
     }
-  }, [messages, loaded]);
+  }, [messages, loaded, loading]);
 
   async function send(override?: string) {
     const text = (override ?? input).trim();
@@ -85,6 +102,7 @@ export default function CoachPage() {
     setMessages(next);
     setInput("");
     setLoading(true);
+    setStreaming(false);
     setError(null);
 
     try {
@@ -101,19 +119,41 @@ export default function CoachPage() {
           messages: next.slice(-20),
           athleteData: mergedAthleteData,
           targetEvents,
+          currentPlan: readCurrentPlan(),
         }),
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Coach request failed");
 
-      const reply: string = json.reply;
-      setMessages([...next, { role: "assistant", content: reply }]);
+      if (!res.ok || !res.body) {
+        let msg = "Coach request failed";
+        try {
+          const j = await res.json();
+          msg = j.error || msg;
+        } catch {
+          // non-JSON error body
+        }
+        throw new Error(msg);
+      }
 
-      // Detect and persist a generated plan.
-      const found = parsePlanBlock(reply);
+      // Stream the reply in token-by-token.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let acc = "";
+      setStreaming(true);
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        acc += decoder.decode(value, { stream: true });
+        setMessages([...next, { role: "assistant", content: acc }]);
+      }
+      acc += decoder.decode();
+      setMessages([...next, { role: "assistant", content: acc }]);
+
+      // Detect and persist a generated/revised plan.
+      const found = parsePlanBlock(acc);
       if (found) {
         try {
           localStorage.setItem(PLAN_KEY, JSON.stringify(found.plan));
+          setHasPlan(true);
         } catch {
           // ignore
         }
@@ -122,6 +162,7 @@ export default function CoachPage() {
       setError(err instanceof Error ? err.message : "Coach request failed");
     } finally {
       setLoading(false);
+      setStreaming(false);
       sending.current = false;
     }
   }
@@ -154,6 +195,15 @@ export default function CoachPage() {
 Please create a periodized plan from today to the event with a 2-week taper.`;
 
     send(message);
+  }
+
+  function reassessPrompt() {
+    send(
+      `Please reassess my current training plan. Compare what I've actually ` +
+        `done recently (training load, CTL/ATL/TSB) against the plan, tell me ` +
+        `whether I'm ahead, on track, or behind, and recommend any changes. ` +
+        `If the plan should change, output the full updated plan.`
+    );
   }
 
   return (
@@ -216,7 +266,7 @@ Please create a periodized plan from today to the event with a 2-week taper.`;
               </div>
             );
           })}
-          {loading && (
+          {loading && !streaming && (
             <div className="text-sm text-slate-500">Coach is thinking…</div>
           )}
         </div>
@@ -227,19 +277,30 @@ Please create a periodized plan from today to the event with a 2-week taper.`;
           </div>
         )}
 
-        {targetEvents.length === 0 ? (
-          <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-            Add a target event on the Dashboard before building a plan.
-          </div>
-        ) : (
-          <button
-            onClick={buildPlanPrompt}
-            disabled={loading}
-            className="rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-          >
-            Build my training plan
-          </button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          {targetEvents.length === 0 ? (
+            <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+              Add a target event on the Dashboard before building a plan.
+            </div>
+          ) : (
+            <button
+              onClick={buildPlanPrompt}
+              disabled={loading}
+              className="rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+            >
+              Build my training plan
+            </button>
+          )}
+          {hasPlan && (
+            <button
+              onClick={reassessPrompt}
+              disabled={loading}
+              className="rounded border border-slate-400 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+            >
+              Reassess my plan
+            </button>
+          )}
+        </div>
 
         <div className="flex gap-2">
           <textarea
@@ -252,7 +313,7 @@ Please create a periodized plan from today to the event with a 2-week taper.`;
               }
             }}
             rows={2}
-            placeholder="Message your coach…"
+            placeholder="Message your coach… (e.g. “change week 3 to lower volume”)"
             className="flex-1 resize-none rounded border border-slate-300 px-3 py-2 text-sm"
           />
           <button

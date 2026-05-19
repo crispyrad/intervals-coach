@@ -7,15 +7,32 @@ import type { GeneratedPlan, PlannedWorkout } from "./types";
 export function parsePlanBlock(
   content: string
 ): { plan: GeneratedPlan; raw: string } | null {
-  const match = content.match(/```plan\s*([\s\S]*?)```/i);
-  if (!match) return null;
+  // Prefer a properly closed ```plan ... ``` block.
+  let raw: string | null = null;
+  let jsonText: string | null = null;
+
+  const closed = content.match(/```plan\s*([\s\S]*?)```/i);
+  if (closed) {
+    raw = closed[0];
+    jsonText = closed[1];
+  } else {
+    // Fall back: an unclosed block (model omitted the closing fence).
+    const open = content.match(/```plan\s*([\s\S]*)$/i);
+    if (open) {
+      raw = open[0];
+      jsonText = open[1];
+    }
+  }
+
+  if (raw == null || jsonText == null) return null;
+
   try {
-    const parsed = JSON.parse(match[1].trim()) as GeneratedPlan;
+    const parsed = JSON.parse(jsonText.trim()) as GeneratedPlan;
     if (parsed && Array.isArray(parsed.weeks) && parsed.weeks.length > 0) {
-      return { plan: parsed, raw: match[0] };
+      return { plan: parsed, raw };
     }
   } catch {
-    // not valid JSON — ignore
+    // truncated or invalid JSON — ignore
   }
   return null;
 }

@@ -3,14 +3,18 @@ import Anthropic from "@anthropic-ai/sdk";
 import type {
   AthleteData,
   ChatMessage,
+  GeneratedPlan,
   TargetEvent,
   Wellness,
 } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+// Allow long plan generations to run (capped to the Vercel plan's limit).
+export const maxDuration = 300;
 
 const MODEL = "claude-sonnet-4-20250514";
 const MAX_MESSAGES = 20;
+const MAX_TOKENS = 16000;
 
 /** Full athlete context passed to the system-prompt builder. */
 type CoachContext = (AthleteData & { targetEvents?: TargetEvent[] }) | null;
@@ -27,7 +31,10 @@ function daysFromToday(date: string, today: string): number {
   return Math.round((a - b) / 86400000);
 }
 
-function buildSystemPrompt(athleteData: CoachContext): string {
+function buildSystemPrompt(
+  athleteData: CoachContext,
+  currentPlan: GeneratedPlan | null
+): string {
   const today = new Date().toISOString().slice(0, 10);
   const w = latestWellness(athleteData);
 
@@ -61,6 +68,24 @@ function buildSystemPrompt(athleteData: CoachContext): string {
           )
           .join("\n");
 
+  // Recent actual training, used for reassessing whether targets are met.
+  const recent = (athleteData?.activities ?? [])
+    .slice()
+    .sort((a, b) => b.start_date_local.localeCompare(a.start_date_local))
+    .slice(0, 14)
+    .map(
+      (a) =>
+        `- ${a.start_date_local.slice(0, 10)} | ${a.type} | ${a.name} | load ${
+          a.icu_training_load ?? "—"
+        }`
+    )
+    .join("\n");
+  const recentText = recent || "No recent activities synced.";
+
+  const planText = currentPlan
+    ? JSON.stringify(currentPlan, null, 2)
+    : "No plan has been generated yet.";
+
   return `You are an expert endurance sports coach. Today is ${today}.
 
 ## Athlete profile
@@ -75,6 +100,12 @@ function buildSystemPrompt(athleteData: CoachContext): string {
 ${eventsText}
 (Each event listed as: name, type, priority, date, and days from today)
 
+## Recent actual training (last 14 activities)
+${recentText}
+
+## Current saved plan
+${planText}
+
 ## How to coach
 - Always reference the athlete's actual CTL, TSB, and days until their next priority A event
 - When building a plan, identify the next Priority A event and work backwards
@@ -83,6 +114,17 @@ ${eventsText}
 - Include a 2-week taper before any A event
 - Determine training phase automatically: base (>16 weeks out), build (8–16 weeks), peak (4–8 weeks), taper (<4 weeks)
 - Ask for weekly hours only if not already provided
+- Keep workout descriptions concise — 3 to 5 short lines each
+
+## Revising an existing plan
+- When the athlete asks to change any part of the current saved plan, re-output the COMPLETE updated plan as a \`\`\`plan block — all weeks, not just the changed ones — so the app can save it.
+- Acknowledge what you changed in prose before the block.
+
+## Reassessing progress
+- When the athlete asks how their plan is going (or to reassess), compare the "plannedLoad" values in the current saved plan against their recent actual training load and CTL/ATL/TSB trend.
+- State clearly whether they are ahead of, on track with, or behind the plan.
+- Recommend specific adjustments (add recovery, cut volume, extend a block, bring intensity forward) and explain why.
+- Only re-output a \`\`\`plan block if the plan actually needs to change; otherwise give advice in prose only.
 
 ## Plan output format
 When the athlete asks for a training plan, output the plan as a JSON block labelled \`\`\`plan (triple backtick then the word plan). Use this schema per workout:
@@ -107,7 +149,7 @@ When the athlete asks for a training plan, output the plan as a JSON block label
   ]
 }
 
-Only schedule workouts on the athlete's preferred training days. Do not output the plan JSON unless the athlete explicitly asks for a plan.`;
+Only schedule workouts on the athlete's preferred training days. Do not output the plan JSON unless the athlete explicitly asks for a plan or a revision. Always close the \`\`\`plan block with a closing triple backtick.`;
 }
 
 export async function POST(req: NextRequest) {
@@ -124,9 +166,11 @@ export async function POST(req: NextRequest) {
       messages?: ChatMessage[];
       athleteData?: AthleteData | null;
       targetEvents?: TargetEvent[];
+      currentPlan?: GeneratedPlan | null;
     };
     const messages = (body.messages ?? []).slice(-MAX_MESSAGES);
     const targetEvents = body.targetEvents ?? [];
+    const currentPlan = body.currentPlan ?? null;
     if (messages.length === 0) {
       return NextResponse.json(
         { error: "messages array is required" },
@@ -140,19 +184,38 @@ export async function POST(req: NextRequest) {
 
     const anthropic = new Anthropic({ apiKey });
 
-    const response = await anthropic.messages.create({
+    const stream = anthropic.messages.stream({
       model: MODEL,
-      max_tokens: 4096,
-      system: buildSystemPrompt(context),
+      max_tokens: MAX_TOKENS,
+      system: buildSystemPrompt(context, currentPlan),
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
     });
 
-    const text = response.content
-      .filter((block) => block.type === "text")
-      .map((block) => (block.type === "text" ? block.text : ""))
-      .join("");
+    const encoder = new TextEncoder();
+    const readable = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        try {
+          for await (const event of stream) {
+            if (
+              event.type === "content_block_delta" &&
+              event.delta.type === "text_delta"
+            ) {
+              controller.enqueue(encoder.encode(event.delta.text));
+            }
+          }
+          controller.close();
+        } catch (err) {
+          controller.error(err);
+        }
+      },
+    });
 
-    return NextResponse.json({ reply: text });
+    return new Response(readable, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "no-store",
+      },
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });
