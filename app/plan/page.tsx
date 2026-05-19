@@ -1,49 +1,42 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useStore } from "@/lib/store";
-import { formatDuration } from "@/lib/format";
-import type { PlannedWorkout, PushResult } from "@/lib/types";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import type { GeneratedPlan, PushResult } from "@/lib/types";
 
-function mondayOf(dateStr: string): string {
-  const d = new Date(`${dateStr}T00:00:00`);
-  const day = (d.getDay() + 6) % 7; // 0 = Monday
-  d.setDate(d.getDate() - day);
-  return d.toISOString().slice(0, 10);
+const PLAN_KEY = "generatedPlan";
+
+function isGeneratedPlan(v: unknown): v is GeneratedPlan {
+  return (
+    !!v &&
+    typeof v === "object" &&
+    Array.isArray((v as GeneratedPlan).weeks)
+  );
 }
 
 export default function PlanPage() {
-  const { plan, setPlan } = useStore();
-  const [editing, setEditing] = useState<number | null>(null);
+  const [plan, setPlan] = useState<GeneratedPlan | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [result, setResult] = useState<PushResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const weeks = useMemo(() => {
-    const map = new Map<string, { index: number; w: PlannedWorkout }[]>();
-    plan.forEach((w, index) => {
-      const key = mondayOf(w.date);
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push({ index, w });
-    });
-    return [...map.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([weekStart, items]) => ({
-        weekStart,
-        items: items.sort((a, b) => a.w.date.localeCompare(b.w.date)),
-      }));
-  }, [plan]);
-
-  function update(index: number, patch: Partial<PlannedWorkout>) {
-    setPlan(plan.map((w, i) => (i === index ? { ...w, ...patch } : w)));
-  }
-
-  function remove(index: number) {
-    setPlan(plan.filter((_, i) => i !== index));
-    setEditing(null);
-  }
+  // Load the coach-generated plan from localStorage on mount.
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(PLAN_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (isGeneratedPlan(parsed)) setPlan(parsed);
+      }
+    } catch {
+      // ignore corrupt storage
+    }
+    setLoaded(true);
+  }, []);
 
   async function push() {
+    if (!plan) return;
     setPushing(true);
     setError(null);
     setResult(null);
@@ -51,7 +44,7 @@ export default function PlanPage() {
       const res = await fetch("/api/push", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workouts: plan }),
+        body: JSON.stringify({ weeks: plan.weeks }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Push failed");
@@ -63,29 +56,62 @@ export default function PlanPage() {
     }
   }
 
-  if (plan.length === 0) {
+  function clearPlan() {
+    try {
+      localStorage.removeItem(PLAN_KEY);
+    } catch {
+      // ignore
+    }
+    setPlan(null);
+    setResult(null);
+    setError(null);
+  }
+
+  const isEmpty = !plan || plan.weeks.length === 0;
+
+  if (loaded && isEmpty) {
     return (
       <div className="space-y-3">
         <h1 className="text-2xl font-bold">Plan Review</h1>
         <p className="text-sm text-slate-500">
-          No plan yet. Ask the AI Coach to build a training plan, then click
-          &ldquo;Review Plan&rdquo;.
+          No plan yet —{" "}
+          <Link href="/coach" className="font-medium text-blue-600 underline">
+            go to the Coach page to build one
+          </Link>
+          .
         </p>
+      </div>
+    );
+  }
+
+  if (!loaded || !plan) {
+    return (
+      <div className="space-y-3">
+        <h1 className="text-2xl font-bold">Plan Review</h1>
+        <p className="text-sm text-slate-500">Loading plan…</p>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-4">
         <h1 className="text-2xl font-bold">Plan Review</h1>
-        <button
-          onClick={push}
-          disabled={pushing}
-          className="rounded bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
-        >
-          {pushing ? "Pushing…" : "Push to Intervals.icu"}
-        </button>
+        <div className="flex flex-col items-end gap-2">
+          <button
+            onClick={push}
+            disabled={pushing}
+            className="rounded bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50"
+          >
+            {pushing ? "Pushing…" : "Push to Intervals.icu"}
+          </button>
+          <button
+            onClick={clearPlan}
+            className="rounded border border-slate-300 px-4 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-100"
+          >
+            Clear plan
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -118,98 +144,41 @@ export default function PlanPage() {
         </div>
       )}
 
-      <div className="space-y-5">
-        {weeks.map((week) => (
-          <section key={week.weekStart}>
+      <div className="space-y-6">
+        {plan.weeks.map((week, wi) => (
+          <section key={week.weekNumber ?? wi}>
             <h2 className="mb-2 text-sm font-semibold text-slate-500">
-              Week of {week.weekStart}
+              Week {week.weekNumber ?? wi + 1}
+              {week.phase ? ` — ${week.phase}` : ""}
+              {week.totalHours ? ` · ${week.totalHours}h planned` : ""}
             </h2>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {week.items.map(({ index, w }) => (
+              {(week.workouts ?? []).map((w, i) => (
                 <div
-                  key={index}
+                  key={i}
                   className="rounded-lg border border-slate-200 bg-white p-3"
                 >
-                  {editing === index ? (
-                    <div className="space-y-2">
-                      <input
-                        value={w.name}
-                        onChange={(e) => update(index, { name: e.target.value })}
-                        className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                        placeholder="Name"
-                      />
-                      <input
-                        value={w.date}
-                        onChange={(e) => update(index, { date: e.target.value })}
-                        className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                        placeholder="YYYY-MM-DD"
-                      />
-                      <input
-                        type="number"
-                        value={w.planned_duration_seconds}
-                        onChange={(e) =>
-                          update(index, {
-                            planned_duration_seconds:
-                              Number(e.target.value) || 0,
-                          })
-                        }
-                        className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                        placeholder="Duration (seconds)"
-                      />
-                      <textarea
-                        value={w.description}
-                        onChange={(e) =>
-                          update(index, { description: e.target.value })
-                        }
-                        rows={4}
-                        className="w-full rounded border border-slate-300 px-2 py-1 font-mono text-xs"
-                        placeholder="Workout steps"
-                      />
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => setEditing(null)}
-                          className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white"
-                        >
-                          Done
-                        </button>
-                        <button
-                          onClick={() => remove(index)}
-                          className="rounded bg-red-600 px-3 py-1 text-xs font-medium text-white"
-                        >
-                          Remove
-                        </button>
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="font-semibold">{w.name}</div>
+                      <div className="text-xs text-slate-500">
+                        {w.date} · {w.type}
                       </div>
                     </div>
-                  ) : (
-                    <>
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <div className="font-semibold">{w.name}</div>
-                          <div className="text-xs text-slate-500">
-                            {w.date} · {w.type} ·{" "}
-                            {formatDuration(w.planned_duration_seconds)}
-                          </div>
-                        </div>
-                        <div className="flex gap-1">
-                          <button
-                            onClick={() => setEditing(index)}
-                            className="text-xs text-blue-600 hover:underline"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            onClick={() => remove(index)}
-                            className="text-xs text-red-600 hover:underline"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      </div>
-                      <pre className="mt-2 whitespace-pre-wrap font-mono text-xs text-slate-700">
-                        {w.description}
-                      </pre>
-                    </>
-                  )}
+                    {w.intensity && (
+                      <span className="rounded bg-slate-800 px-1.5 py-0.5 text-xs font-bold text-white">
+                        {w.intensity}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {w.durationMinutes
+                      ? `${w.durationMinutes} min`
+                      : "Duration —"}
+                  </div>
+                  <pre className="mt-2 whitespace-pre-wrap font-mono text-xs text-slate-700">
+                    {w.description}
+                  </pre>
                 </div>
               ))}
             </div>
