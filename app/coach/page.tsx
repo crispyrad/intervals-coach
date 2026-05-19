@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useStore } from "@/lib/store";
-import { parsePlanBlock, planSummary } from "@/lib/plan";
+import { mergePlan, parsePlanBlock, planSummary } from "@/lib/plan";
 import type { ChatMessage, GeneratedPlan, TargetEvent } from "@/lib/types";
 
 const CHAT_KEY = "coach-chat-history";
@@ -63,6 +63,8 @@ export default function CoachPage() {
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [hasPlan, setHasPlan] = useState(false);
+  const [phase, setPhase] = useState("Base");
+  const [blockWeeks, setBlockWeeks] = useState(3);
   const sending = useRef(false);
 
   const wellness = latestWellness(athleteData);
@@ -152,7 +154,9 @@ export default function CoachPage() {
       const found = parsePlanBlock(acc);
       if (found) {
         try {
-          localStorage.setItem(PLAN_KEY, JSON.stringify(found.plan));
+          // Append/merge the new block into any existing saved plan.
+          const merged = mergePlan(readCurrentPlan(), found.plan);
+          localStorage.setItem(PLAN_KEY, JSON.stringify(merged));
           setHasPlan(true);
         } catch {
           // ignore
@@ -176,9 +180,8 @@ export default function CoachPage() {
     }
   }
 
-  function buildPlanPrompt() {
+  function buildBlock() {
     const event = nextTargetEvent(targetEvents);
-    if (!event) return;
     const { weeklyHours, preferredDays } = readPrefs();
     const ctl = wellness?.ctl != null ? Math.round(wellness.ctl) : "unknown";
     const tsb = wellness?.tsb != null ? Math.round(wellness.tsb) : "unknown";
@@ -186,13 +189,34 @@ export default function CoachPage() {
     const daysText =
       preferredDays.length > 0 ? preferredDays.join(", ") : "any day";
 
-    const message = `Please build me a training plan. Here's my situation:
-- Available training time: ${weeklyHours} hours per week
-- Preferred days: ${daysText}
-- Next target event: ${event.name} on ${event.date} (${event.type}, Priority ${event.priority})
+    const current = readCurrentPlan();
+    const lastWeek = current
+      ? current.weeks.reduce((m, w) => Math.max(m, w.weekNumber ?? 0), 0)
+      : 0;
+
+    const continuation =
+      lastWeek > 0
+        ? `I already have weeks 1-${lastWeek} saved. Continue week numbering from week ${
+            lastWeek + 1
+          } and continue workout dates from the day after the last saved workout. Output ONLY the new ${blockWeeks}-week block.`
+        : `This is the first block — start at week 1 from today.`;
+
+    const eventLine = event
+      ? `- Next target event: ${event.name} on ${event.date} (${event.type}, Priority ${event.priority})`
+      : `- No target event set yet`;
+
+    const message = `Please generate the next training block.
+- Phase: ${phase}
+- Block length: ${blockWeeks} weeks
+- Loading pattern: 2 weeks load + 1 week recovery (masters athlete, age 49)
+- Weekly hours available: ${weeklyHours}
+- Preferred training days: ${daysText}
+${eventLine}
 - Current fitness: CTL ${ctl}, TSB ${tsb}, FTP ${ftpText}
 
-Please create a periodized plan from today to the event with a 2-week taper.`;
+${continuation}
+
+Follow the masters periodization guidance for the ${phase} phase. Output the block as a \`\`\`plan JSON block.`;
 
     send(message);
   }
@@ -277,29 +301,58 @@ Please create a periodized plan from today to the event with a 2-week taper.`;
           </div>
         )}
 
-        <div className="flex flex-wrap gap-2">
-          {targetEvents.length === 0 ? (
-            <div className="rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-              Add a target event on the Dashboard before building a plan.
-            </div>
-          ) : (
+        <div className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
+          <div className="text-sm font-semibold text-slate-700">
+            Build a training block
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <label className="flex flex-col text-xs text-slate-500">
+              Periodization phase
+              <select
+                value={phase}
+                onChange={(e) => setPhase(e.target.value)}
+                className="mt-1 rounded border border-slate-300 px-2 py-1 text-sm text-slate-900"
+              >
+                <option>Base</option>
+                <option>Build 1</option>
+                <option>Build 2</option>
+                <option>Peak</option>
+                <option>Transition</option>
+              </select>
+            </label>
+            <label className="flex flex-col text-xs text-slate-500">
+              Block length
+              <select
+                value={blockWeeks}
+                onChange={(e) => setBlockWeeks(Number(e.target.value))}
+                className="mt-1 rounded border border-slate-300 px-2 py-1 text-sm text-slate-900"
+              >
+                <option value={3}>3 weeks (2 load + 1 recovery)</option>
+                <option value={4}>4 weeks (3 load + 1 recovery)</option>
+              </select>
+            </label>
             <button
-              onClick={buildPlanPrompt}
+              onClick={buildBlock}
               disabled={loading}
               className="rounded bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
             >
-              Build my training plan
+              {hasPlan ? "Build next block" : "Build first block"}
             </button>
-          )}
-          {hasPlan && (
-            <button
-              onClick={reassessPrompt}
-              disabled={loading}
-              className="rounded border border-slate-400 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
-            >
-              Reassess my plan
-            </button>
-          )}
+            {hasPlan && (
+              <button
+                onClick={reassessPrompt}
+                disabled={loading}
+                className="rounded border border-slate-400 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+              >
+                Reassess my plan
+              </button>
+            )}
+          </div>
+          <p className="text-xs text-slate-400">
+            Generates one short block at a time (free-tier friendly). Each block
+            is appended to your saved plan — build Base, then Build 1, and so
+            on.
+          </p>
         </div>
 
         <div className="flex gap-2">

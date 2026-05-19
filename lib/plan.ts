@@ -1,4 +1,22 @@
-import type { GeneratedPlan, PlannedWorkout } from "./types";
+import type { GeneratedPlan, PlannedWorkout, PlanWeek } from "./types";
+
+/**
+ * Merge a newly generated block into the existing plan, keyed by weekNumber.
+ * New weeks with a matching weekNumber replace the old ones; the rest are
+ * appended. Used so the plan can be built up one block at a time.
+ */
+export function mergePlan(
+  existing: GeneratedPlan | null,
+  incoming: GeneratedPlan
+): GeneratedPlan {
+  const byNumber = new Map<number, PlanWeek>();
+  for (const w of existing?.weeks ?? []) byNumber.set(w.weekNumber, w);
+  for (const w of incoming.weeks) byNumber.set(w.weekNumber, w);
+  const weeks = [...byNumber.values()].sort(
+    (a, b) => (a.weekNumber ?? 0) - (b.weekNumber ?? 0)
+  );
+  return { weeks };
+}
 
 /**
  * Detect a ```plan fenced block in an assistant reply and parse the
