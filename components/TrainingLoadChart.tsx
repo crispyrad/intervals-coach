@@ -19,7 +19,7 @@ export default function TrainingLoadChart({
 }) {
   const data = [...wellness]
     .sort((a, b) => a.id.localeCompare(b.id))
-    .slice(-30)
+    .slice(-42)
     .map((w) => ({
       date: w.id?.slice(5) ?? "",
       CTL: w.ctl != null ? Math.round(w.ctl) : null,

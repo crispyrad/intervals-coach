@@ -5,7 +5,11 @@ import {
   isoDaysAgo,
   isoToday,
 } from "@/lib/intervals";
-import type { Activity, AthleteProfile, Wellness } from "@/lib/types";
+import {
+  normalizeActivities,
+  normalizeProfile,
+  normalizeWellness,
+} from "@/lib/normalize";
 
 export const dynamic = "force-dynamic";
 
@@ -13,22 +17,26 @@ export async function GET() {
   try {
     const id = athleteId();
 
-    const [profile, activities, wellness] = await Promise.all([
-      intervalsGet(`/athlete/${id}`) as Promise<AthleteProfile>,
+    const [profileRaw, activitiesRaw, wellnessRaw] = await Promise.all([
+      intervalsGet(`/athlete/${id}`),
       intervalsGet(`/athlete/${id}/activities`, {
         oldest: isoDaysAgo(90),
         newest: isoToday(),
-      }) as Promise<Activity[]>,
+      }),
       intervalsGet(`/athlete/${id}/wellness`, {
-        oldest: isoDaysAgo(30),
+        oldest: isoDaysAgo(42),
         newest: isoToday(),
-      }) as Promise<Wellness[]>,
+      }),
     ]);
 
     return NextResponse.json({
-      profile,
-      activities: Array.isArray(activities) ? activities : [],
-      wellness: Array.isArray(wellness) ? wellness : [],
+      profile: normalizeProfile((profileRaw ?? {}) as Record<string, unknown>),
+      activities: normalizeActivities(
+        Array.isArray(activitiesRaw) ? activitiesRaw : []
+      ),
+      wellness: normalizeWellness(
+        Array.isArray(wellnessRaw) ? wellnessRaw : []
+      ),
       syncedAt: new Date().toISOString(),
     });
   } catch (err) {

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import TrainingLoadChart from "@/components/TrainingLoadChart";
+import TargetEvents from "@/components/TargetEvents";
 import { useStore } from "@/lib/store";
 import { formatDate, formatDuration } from "@/lib/format";
 import type { AthleteData } from "@/lib/types";
@@ -64,11 +65,13 @@ export default function DashboardPage() {
         </p>
       )}
 
+      <TargetEvents />
+
       {athleteData && (
         <>
           <section className="rounded-lg border border-slate-200 bg-white p-4">
             <h2 className="mb-3 text-lg font-semibold">
-              Training Load — last 30 days
+              Training Load — last 42 days
             </h2>
             <TrainingLoadChart wellness={athleteData.wellness} />
           </section>

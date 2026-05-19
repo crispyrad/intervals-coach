@@ -12,7 +12,7 @@ function latestWellness(data: ReturnType<typeof useStore>["athleteData"]) {
 }
 
 export default function CoachPage() {
-  const { athleteData, setPlan } = useStore();
+  const { athleteData, setPlan, targetEvents } = useStore();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -36,7 +36,7 @@ export default function CoachPage() {
       const res = await fetch("/api/coach", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next, athleteData }),
+        body: JSON.stringify({ messages: next, athleteData, targetEvents }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Coach request failed");
@@ -149,6 +149,24 @@ export default function CoachPage() {
           label="TSB"
           value={wellness?.tsb != null ? Math.round(wellness.tsb) : "—"}
         />
+
+        <h2 className="pt-2 text-sm font-semibold text-slate-500">
+          Target events
+        </h2>
+        {targetEvents.length === 0 ? (
+          <p className="text-xs text-slate-400">
+            None — add some on the Dashboard.
+          </p>
+        ) : (
+          <ul className="space-y-1">
+            {targetEvents.map((e) => (
+              <li key={e.id} className="text-xs">
+                <span className="font-semibold">{e.priority}</span> {e.name}
+                <span className="block text-slate-400">{e.date}</span>
+              </li>
+            ))}
+          </ul>
+        )}
       </aside>
     </div>
   );

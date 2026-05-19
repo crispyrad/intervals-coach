@@ -42,6 +42,16 @@ export interface ChatMessage {
   content: string;
 }
 
+/** A goal race or target event the coach should plan training around. */
+export interface TargetEvent {
+  id: string;
+  date: string; // YYYY-MM-DD
+  name: string;
+  type: string; // e.g. "Race", "Gran Fondo", "Goal Event"
+  priority: "A" | "B" | "C";
+  notes?: string;
+}
+
 export type WorkoutCategory =
   | "WORKOUT"
   | "RACE_A"

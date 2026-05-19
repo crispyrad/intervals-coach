@@ -7,23 +7,27 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { AthleteData, PlannedWorkout } from "./types";
+import type { AthleteData, PlannedWorkout, TargetEvent } from "./types";
 
 interface Store {
   athleteData: AthleteData | null;
   setAthleteData: (d: AthleteData | null) => void;
   plan: PlannedWorkout[];
   setPlan: (p: PlannedWorkout[]) => void;
+  targetEvents: TargetEvent[];
+  setTargetEvents: (e: TargetEvent[]) => void;
 }
 
 const StoreContext = createContext<Store | null>(null);
 
 const ATHLETE_KEY = "ic_athleteData";
 const PLAN_KEY = "ic_plan";
+const EVENTS_KEY = "ic_targetEvents";
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [athleteData, setAthleteDataState] = useState<AthleteData | null>(null);
   const [plan, setPlanState] = useState<PlannedWorkout[]>([]);
+  const [targetEvents, setTargetEventsState] = useState<TargetEvent[]>([]);
 
   // Rehydrate from sessionStorage so state survives page navigation/refresh.
   useEffect(() => {
@@ -32,6 +36,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (a) setAthleteDataState(JSON.parse(a));
       const p = sessionStorage.getItem(PLAN_KEY);
       if (p) setPlanState(JSON.parse(p));
+      const e = sessionStorage.getItem(EVENTS_KEY);
+      if (e) setTargetEventsState(JSON.parse(e));
     } catch {
       // ignore corrupt storage
     }
@@ -56,9 +62,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const setTargetEvents = (e: TargetEvent[]) => {
+    setTargetEventsState(e);
+    try {
+      sessionStorage.setItem(EVENTS_KEY, JSON.stringify(e));
+    } catch {
+      // ignore
+    }
+  };
+
   return (
     <StoreContext.Provider
-      value={{ athleteData, setAthleteData, plan, setPlan }}
+      value={{
+        athleteData,
+        setAthleteData,
+        plan,
+        setPlan,
+        targetEvents,
+        setTargetEvents,
+      }}
     >
       {children}
     </StoreContext.Provider>

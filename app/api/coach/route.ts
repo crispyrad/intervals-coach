@@ -1,15 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
-import type { AthleteData, ChatMessage } from "@/lib/types";
+import type { AthleteData, ChatMessage, TargetEvent } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 const MODEL = "claude-sonnet-4-20250514";
 
-function buildSystemPrompt(athleteData: AthleteData | null): string {
+function buildSystemPrompt(
+  athleteData: AthleteData | null,
+  targetEvents: TargetEvent[]
+): string {
   const context = athleteData
     ? JSON.stringify(athleteData, null, 2)
     : "No athlete data has been synced yet.";
+
+  const events =
+    targetEvents.length > 0
+      ? JSON.stringify(targetEvents, null, 2)
+      : "No target events have been set.";
 
   return `You are an expert endurance sports coach. You coach cyclists, runners,
 and triathletes using training-load principles (CTL = fitness, ATL = fatigue,
@@ -23,6 +31,14 @@ ${context}
 Use this data in every answer: reference the athlete's FTP, current CTL/ATL/TSB
 trend, recent training load, and wellness signals (HRV, resting HR, sleep) when
 relevant.
+
+TARGET EVENTS (goal races / key dates the athlete is training toward):
+${events}
+
+When target events are set, periodise training toward them: schedule build and
+peak phases so the athlete arrives at each A-priority event fresh (positive TSB),
+treat B events as tune-ups, and C events as training. Reference the named events
+and their dates in your plans and advice.
 
 WHEN THE ATHLETE ASKS FOR A TRAINING PLAN, output a fenced \`\`\`json code block
 containing an array of workout objects. Each workout object MUST use this exact
@@ -59,8 +75,10 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as {
       messages?: ChatMessage[];
       athleteData?: AthleteData | null;
+      targetEvents?: TargetEvent[];
     };
     const messages = body.messages ?? [];
+    const targetEvents = body.targetEvents ?? [];
     if (messages.length === 0) {
       return NextResponse.json(
         { error: "messages array is required" },
@@ -73,7 +91,7 @@ export async function POST(req: NextRequest) {
     const response = await anthropic.messages.create({
       model: MODEL,
       max_tokens: 4096,
-      system: buildSystemPrompt(body.athleteData ?? null),
+      system: buildSystemPrompt(body.athleteData ?? null, targetEvents),
       messages: messages.map((m) => ({
         role: m.role,
         content: m.content,
